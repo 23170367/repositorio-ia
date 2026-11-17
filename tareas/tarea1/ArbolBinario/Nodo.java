@@ -1,4 +1,4 @@
-package tareas.tarea1;
+package tareas.tarea1.ArbolBinario;
 
 public class Nodo {
     String nombre;

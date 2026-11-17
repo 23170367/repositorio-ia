@@ -1,4 +1,4 @@
-package tareas.tarea1;
+package tareas.tarea1.ArbolBinario;
 
 public class Main {
     public static void main(String[] args) {
