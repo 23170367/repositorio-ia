@@ -1,5 +1,3 @@
-package tareas.tarea3.BusquedasNoInformadas;
-
 public class Node{
     private String state;
     private Node parent;

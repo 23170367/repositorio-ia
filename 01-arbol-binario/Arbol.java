@@ -1,5 +1,3 @@
-package tareas.tarea1.ArbolBinario;
-
 public class Arbol {
     Nodo raiz;
 

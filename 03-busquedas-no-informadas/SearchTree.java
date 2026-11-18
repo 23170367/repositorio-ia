@@ -1,5 +1,3 @@
-package tareas.tarea3.BusquedasNoInformadas;
-
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;

@@ -1,5 +1,3 @@
-package tareas.tarea3.BusquedasNoInformadas;
-
 import java.util.ArrayList;
 import java.util.List;
 public class NodeUtils {

@@ -1,5 +1,3 @@
-package tareas.tarea3.BusquedasNoInformadas;
-
 import java.util.Comparator;
 
 public class NodePriorityComparator implements Comparator<Node> {
