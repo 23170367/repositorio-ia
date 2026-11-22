@@ -1,0 +1,6 @@
+# Ignorar carpeta de imágenes del dataset
+dataset/
+**/dataset/
+#ignorar el modelo descargado de MediaPipe si no quieres subirlo
+face_landmarker.task
+**/face_landmarker.task
