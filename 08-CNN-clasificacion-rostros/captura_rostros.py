@@ -1,5 +1,5 @@
 """
-Script de Captura y Alineación de Rostros para Dataset CNN (1:1 Cuadrado)
+Script de Captura y Alineación de Rostros para Dataset CNN (1:1 Cuadrado - Solo Rostro)
 Desarrollado con OpenCV y MediaPipe Tasks API (Face Landmarker).
 """
 
@@ -29,7 +29,8 @@ MIN_INTERVAL_SEC = 0.3            # Intervalo mínimo en segundos entre capturas
 
 # 📐 Filtros de Calidad y Geometría
 MIN_FACE_WIDTH_PERCENT = 0.20     # El ancho del rostro debe ocupar mínimo el 20% del frame
-PADDING_PERCENT = 0.60            # Padding adicional simétrico desde el centro del rostro (ej. 0.6 = 60% más amplio)
+# Padding reducido al 15% para encuadrar estrictamente la cara sin agarrar hombros
+PADDING_PERCENT = 0.15            
 
 # 💡 Filtros de Iluminación
 MIN_AVG_BRIGHTNESS = 60           # Brillo promedio mínimo (escala de grises 0-255)
@@ -42,7 +43,6 @@ EAR_THRESHOLD = 0.22              # Umbral de Eye Aspect Ratio (menor = cerrado/
 LAPLACIAN_VAR_THRESH = 60.0       # Umbral de nitidez (varianza del Laplaciano). Ajustar según la cámara.
 
 # 🔄 Bloques de Pose (Yaw y Pitch permitidos por etapa)
-# Se ajustaron los rangos de Arriba/Abajo y se amplió el yaw permitido a (-25, 25)
 POSE_BLOCKS = [
     {"name": "Frente",         "yaw": (-15, 15), "pitch": (-15, 15), "count": 0, "target": CUOTA_POR_BLOQUE},
     {"name": "Leve Izquierda", "yaw": (-45, -20), "pitch": (-15, 15), "count": 0, "target": CUOTA_POR_BLOQUE},
@@ -117,7 +117,7 @@ def get_brightness_stats(gray_img):
     return mean_val, black_pct, white_pct
 
 def align_and_crop(image, landmarks_list, pad_pct):
-    """Alinea el rostro y realiza un recorte CUADRADO 1:1 con padding simétrico sin bordes negros."""
+    """Alinea el rostro y realiza un recorte CUADRADO 1:1 estricto al rostro, sin hombros ni bordes negros."""
     h, w, _ = image.shape
     
     left_eye_pts = np.array([landmarks_list[i] for i in LEFT_EYE])
@@ -130,7 +130,7 @@ def align_and_crop(image, landmarks_list, pad_pct):
     dX = right_center[0] - left_center[0]
     angle = np.degrees(np.arctan2(dY, dX))
     
-    # 1. Casting a float nativo para evitar errores de tipo en NumPy/OpenCV
+    # Casting a float nativo para evitar errores de tipo en NumPy/OpenCV
     face_center_raw = np.array(landmarks_list).mean(axis=0)
     face_center = (float(face_center_raw[0]), float(face_center_raw[1]))
     
@@ -149,12 +149,15 @@ def align_and_crop(image, landmarks_list, pad_pct):
     face_w = max_x - min_x
     face_h = max_y - min_y
     
-    # 2. Calcular recorte cuadrado 1:1 tomando el lado mayor
+    # 2. Calcular recorte cuadrado 1:1 tomando el lado mayor (generalmente el alto del rostro)
     base_side = max(face_w, face_h)
     cx = int((min_x + max_x) / 2)
-    cy = int((min_y + max_y) / 2)
     
-    # Aplicar padding simétrico desde el centro
+    # Ajuste CLAVE: Desplazar el centro un 5% de la altura hacia arriba.
+    # Esto asegura que el cuadro inferior se corte cerca del mentón y no llegue a los hombros/cuello.
+    cy = int((min_y + max_y) / 2) - int(face_h * 0.05)
+    
+    # Aplicar padding simétrico (reducido) desde este nuevo centro
     half_side = int((base_side / 2.0) * (1.0 + pad_pct))
     
     start_x = cx - half_side
@@ -162,7 +165,7 @@ def align_and_crop(image, landmarks_list, pad_pct):
     start_y = cy - half_side
     end_y = cy + half_side
     
-    # 3. Rechazar si el recorte sale de los límites (evita marcos negros)
+    # 3. Rechazar si el recorte sale de los límites (evita marcos negros virtualmente creados por el padding)
     if start_x < 0 or start_y < 0 or end_x > w or end_y > h:
         return None  
         
@@ -322,7 +325,6 @@ def main():
         cv2.putText(display_frame, f"Bloque: {block['name']} ({block['count']}/{block['target']})", 
                     (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         
-        # Mostrar Yaw y Pitch en tiempo real
         cv2.putText(display_frame, f"Yaw: {yaw:.1f} | Pitch: {pitch:.1f}", 
                     (w - 350, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
