@@ -3,3 +3,12 @@ dataset/
 
 face_landmarker.task
 **/face_landmarker.task
+
+modelo_facial.keras
+**/modelo_facial.keras
+
+modelo_facial_finetuned.keras
+**/modelo_facial_finetuned.keras
+
+clases.json
+**/clases.json
