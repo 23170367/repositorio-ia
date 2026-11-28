@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import time
 import cv2
@@ -10,64 +9,35 @@ import mediapipe as mp
 # ==============================================================================
 # CONFIGURACIÓN Y CONSTANTES
 # ==============================================================================
+# Detecta automáticamente la carpeta donde está guardado este script
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_FILENAME = "modelo_facial_finetuned.keras"
-CLASSES_FILENAME = "clases.json"
-TASK_FILENAME = "face_landmarker.task"
 
-MODEL_PATH = os.path.join(BASE_DIR, MODEL_FILENAME)
-CLASSES_PATH = os.path.join(BASE_DIR, CLASSES_FILENAME)
-TASK_PATH = os.path.join(BASE_DIR, TASK_FILENAME)
+# Une la carpeta del script con los nombres de los archivos
+MODEL_PATH = os.path.join(BASE_DIR, "modelo_facial.keras")
+CLASSES_PATH = os.path.join(BASE_DIR, "clases.json")
+TASK_PATH = os.path.join(BASE_DIR, "face_landmarker.task")
 
 IMG_SIZE = (224, 224)
 PADDING_PERCENT = 0.15      
 UMBRAL_CONFIANZA = 0.65
 CAMERA_INDEX = 0
-
-# Se mantiene la red neuronal ejecutándose cada 5 frames
 PROCESS_EVERY_N_FRAMES = 5
 
-# Índices clave de MediaPipe Face Mesh para alineación
 LEFT_EYE = [33, 160, 158, 133, 153, 144]
 RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
 # ==============================================================================
-# INICIALIZACIÓN Y VALIDACIÓN DE ARCHIVOS
+# INICIALIZACIÓN
 # ==============================================================================
-def verificar_archivos():
-    faltantes = [p for p in [MODEL_PATH, CLASSES_PATH, TASK_PATH] if not os.path.exists(p)]
-    if faltantes:
-        print("ERROR: Faltan los siguientes archivos:")
-        for f in faltantes: print(f"  - {f}")
-        sys.exit(1)
-
-verificar_archivos()
-
 with open(CLASSES_PATH, "r", encoding="utf-8") as f:
-    data_clases = json.load(f)
-    if isinstance(data_clases, dict):
-        if all(isinstance(v, int) for v in data_clases.values()):
-            clases = [k for k, v in sorted(data_clases.items(), key=lambda x: x[1])]
-        else:
-            clases = [data_clases[str(i)] for i in range(len(data_clases))]
-    else:
-        clases = data_clases
+    clases = json.load(f)
 
-print("Cargando modelo MobileNetV2...")
-model = tf.keras.models.load_model(MODEL_PATH)
+model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+_ = model(np.zeros((1, 224, 224, 3), dtype=np.float32), training=False)  # Warm-up
 
-print("Calentando el modelo (Warm-up)...")
-dummy_input = np.zeros((1, 224, 224, 3), dtype=np.float32)
-_ = model(dummy_input, training=False)
-
-BaseOptions = mp.tasks.BaseOptions
-FaceLandmarker = mp.tasks.vision.FaceLandmarker
-FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
-VisionRunningMode = mp.tasks.vision.RunningMode
-
-options = FaceLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=TASK_PATH),
-    running_mode=VisionRunningMode.VIDEO,
+options = mp.tasks.vision.FaceLandmarkerOptions(
+    base_options=mp.tasks.BaseOptions(model_asset_path=TASK_PATH),
+    running_mode=mp.tasks.vision.RunningMode.VIDEO,
     num_faces=5
 )
 
@@ -80,23 +50,17 @@ def align_and_crop(image, landmarks_list, pad_pct):
     left_eye_pts = np.array([landmarks_list[i] for i in LEFT_EYE])
     right_eye_pts = np.array([landmarks_list[i] for i in RIGHT_EYE])
     
-    left_center = left_eye_pts.mean(axis=0)
-    right_center = right_eye_pts.mean(axis=0)
-    
-    dY = right_center[1] - left_center[1]
-    dX = right_center[0] - left_center[0]
+    dY = right_eye_pts.mean(axis=0)[1] - left_eye_pts.mean(axis=0)[1]
+    dX = right_eye_pts.mean(axis=0)[0] - left_eye_pts.mean(axis=0)[0]
     angle = np.degrees(np.arctan2(dY, dX))
     
     face_center_raw = np.array(landmarks_list).mean(axis=0)
     face_center = (float(face_center_raw[0]), float(face_center_raw[1]))
     
     M = cv2.getRotationMatrix2D(face_center, angle, 1.0)
-    
     rotated_img = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     
-    ones = np.ones((len(landmarks_list), 1))
-    pts3d = np.hstack([landmarks_list, ones])
-    transformed_pts = M.dot(pts3d.T).T
+    transformed_pts = cv2.transform(np.array([landmarks_list], dtype=np.float32), M)[0]
     
     min_x = int(np.min(transformed_pts[:, 0]))
     max_x = int(np.max(transformed_pts[:, 0]))
@@ -107,8 +71,8 @@ def align_and_crop(image, landmarks_list, pad_pct):
     face_h = max_y - min_y
     
     base_side = max(face_w, face_h)
-    cx = int((min_x + max_x) / 2)
-    cy = int((min_y + max_y) / 2) - int(face_h * 0.05)
+    cx = (min_x + max_x) // 2
+    cy = (min_y + max_y) // 2 - int(face_h * 0.05)
     
     half_side = int((base_side / 2.0) * (1.0 + pad_pct))
     
@@ -127,22 +91,17 @@ def align_and_crop(image, landmarks_list, pad_pct):
 # ==============================================================================
 def main():
     cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
-        print(f"ERROR: No se pudo abrir la cámara {CAMERA_INDEX}")
-        sys.exit(1)
-        
-    # MEJORA CLAVE: Bajar la resolución a 640x480 (reduce el trabajo del procesador)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
+    
     print("\nIniciando cámara... Presiona 'q' o 'ESC' para salir.")
     
     last_timestamp_ms = 0
     frame_counter = 0
-    last_predictions = {} 
+    last_predictions = [] 
     
     try:
-        landmarker = FaceLandmarker.create_from_options(options)
+        landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(options)
         
         while True:
             ret, frame = cap.read()
@@ -150,7 +109,6 @@ def main():
             
             frame = cv2.flip(frame, 1)
             frame_counter += 1
-            
             run_cnn = (frame_counter % PROCESS_EVERY_N_FRAMES == 0)
             
             frame_h, frame_w, _ = frame.shape
@@ -166,17 +124,15 @@ def main():
 
             if result.face_landmarks:
                 if run_cnn:
-                    #print("\033[H\033[J", end="") 
-                    #print(f"--- DIAGNÓSTICO EN VIVO ({len(result.face_landmarks)} rostro/s) ---")
-                    last_predictions.clear()
+                    last_predictions = []
 
                 for idx, face_landmarks in enumerate(result.face_landmarks):
-                    landmarks_px = [[int(lm.x * frame_w), int(lm.y * frame_h)] for lm in face_landmarks]
+                    landmarks_px = np.array([[int(lm.x * frame_w), int(lm.y * frame_h)] for lm in face_landmarks])
+                    min_x, min_y = np.min(landmarks_px, axis=0)
+                    max_x, max_y = np.max(landmarks_px, axis=0)
                     
-                    min_x = min(p[0] for p in landmarks_px)
-                    max_x = max(p[0] for p in landmarks_px)
-                    min_y = min(p[1] for p in landmarks_px)
-                    max_y = max(p[1] for p in landmarks_px)
+                    cx = (min_x + max_x) // 2
+                    cy = (min_y + max_y) // 2
 
                     if run_cnn:
                         cropped_bgr = align_and_crop(frame, landmarks_px, PADDING_PERCENT)
@@ -189,11 +145,6 @@ def main():
                             predicciones = model(roi_batch, training=False).numpy()[0]
                             indice_clase = np.argmax(predicciones)
                             confianza = predicciones[indice_clase]
-
-                            #print(f"\nRostro {idx + 1}:")
-                            #for i, conf in enumerate(predicciones):
-                            #    marcador = ">>> " if i == indice_clase else "    "
-                            #    print(f"{marcador}{clases[i]}: {conf*100:>5.2f}%")
                             
                             if confianza >= UMBRAL_CONFIANZA:
                                 etiqueta = f"{clases[indice_clase]} ({confianza*100:.1f}%)"
@@ -202,21 +153,49 @@ def main():
                                 etiqueta = f"Desconocido ({confianza*100:.1f}%)"
                                 color_caja = (0, 0, 255)
                             
-                            last_predictions[idx] = (etiqueta, color_caja)
+                            last_predictions.append({
+                                "etiqueta": etiqueta,
+                                "color": color_caja,
+                                "centro": (cx, cy)
+                            })
                         else:
-                            last_predictions[idx] = ("Descartado (bordes)", (0, 165, 255))
-                            #print(f"\nRostro {idx + 1}: Recorte descartado (Fuera de límites)")
+                            last_predictions.append({
+                                "etiqueta": "Descartado",
+                                "color": (0, 165, 255),
+                                "centro": (cx, cy)
+                            })
+                            
+                        etiqueta_dibujo = last_predictions[-1]["etiqueta"]
+                        color_dibujo = last_predictions[-1]["color"]
+                        
+                    else:
+                        mejor_match = None
+                        distancia_min = float('inf')
+                        
+                        for pred in last_predictions:
+                            px, py = pred["centro"]
+                            dist = (cx - px)**2 + (cy - py)**2
+                            if dist < distancia_min:
+                                distancia_min = dist
+                                mejor_match = pred
+                        
+                        if mejor_match is not None and distancia_min < 25000:
+                            etiqueta_dibujo = mejor_match["etiqueta"]
+                            color_dibujo = mejor_match["color"]
+                            mejor_match["centro"] = (cx, cy)
+                        else:
+                            etiqueta_dibujo = "Calculando..."
+                            color_dibujo = (150, 150, 150)
                     
-                    if idx in last_predictions:
-                        etiqueta, color_caja = last_predictions[idx]
-                        label_y = max(min_y, 25)
-                        
-                        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color_caja, 2)
-                        (tw, th), _ = cv2.getTextSize(etiqueta, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
-                        
-                        cv2.rectangle(frame, (min_x, label_y - 25), (min_x + tw, label_y), color_caja, -1)
-                        cv2.putText(frame, etiqueta, (min_x, label_y - 5), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+                    label_y = max(min_y, 25)
+                    cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color_dibujo, 2)
+                    (tw, th), _ = cv2.getTextSize(etiqueta_dibujo, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+                    
+                    cv2.rectangle(frame, (min_x, label_y - 25), (min_x + tw, label_y), color_dibujo, -1)
+                    cv2.putText(frame, etiqueta_dibujo, (min_x, label_y - 5), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+            else:
+                last_predictions = []
 
             cv2.imshow('Reconocimiento Facial (Alineado)', frame)
 
@@ -225,12 +204,9 @@ def main():
                 break
                 
     finally:
-        print("\nLiberando recursos...")
-        if 'landmarker' in locals():
-            landmarker.close()
+        landmarker.close()
         cap.release()
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
     main()
